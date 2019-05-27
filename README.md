@@ -5,3 +5,5 @@
 ## 特色
 支援陳列 table/view/trigger  
 線上即時顯示資料庫與資料表
+獲得當前資料庫所有資料表全局概述狀態(Show table status)
+
