@@ -58,6 +58,30 @@ if (isset($_SESSION['server']) && isset($_SESSION['username']) ){
     $_SESSION['conn_state'] = true;
 }
 
+if($act == 'show_trigger_statement'){
+
+    $triggerName = isset($_REQUEST['trigger_name'])? $_REQUEST['trigger_name'] : null;
+    
+    $statement = $mysqli->prepare('select *
+    from information_schema.triggers where 
+    information_schema.triggers.trigger_schema = ?  AND TRIGGER_NAME = ?');
+    $statement->bind_param("ss", $db , $triggerName);
+
+    $statement->execute();
+    $result = $statement->get_result();
+    
+    $row = $result->fetch_assoc();
+    
+    $html = '';
+    $html .= '<form>';
+    $html .= '名稱：<input size="50" value="' . htmlspecialchars($row['TRIGGER_NAME'], ENT_QUOTES) . '">';
+    $html .= '定義人：<input size="50" value="' . htmlspecialchars($row['DEFINER'], ENT_QUOTES) . '"><br>';
+    $html .= '觸發器語句：<br><textarea cols="130" rows="25">' . htmlspecialchars($row['ACTION_STATEMENT'], ENT_QUOTES) . '</textarea>';
+
+    $html .= '</form>';
+    die($html);
+
+}
 if($act == 'dump_all'){
     $export_use_table = isset($_POST['export_use_table'])? $_POST['export_use_table'] : false ;
     $save_mode = isset($_POST['save_mode'])? $_POST['save_mode'] :'';
@@ -315,7 +339,7 @@ if (isset($_SESSION['conn_state']) && !empty($db) ){
         $i = 0;
         while($row = $result->fetch_assoc()){
             ++$i;
-            $html .= "<tr><td>" . $i . "</td><td>" . $row['TABLE_NAME'] . "</td><td>" . $row['TABLE_TYPE'] . "</td><td>" . $row['TABLE_COMMENT'] . "</td></tr>";
+            $html .= "<tr><td>" . $i . '</td><td><a href="#">' . $row['TABLE_NAME'] . '</td><td>'. $row['TABLE_TYPE'] . '</td><td>' . $row['TABLE_COMMENT'] . '</td></tr>';
         }
         $html .= "</table>";
     }
@@ -329,7 +353,7 @@ if (isset($_SESSION['conn_state']) && !empty($db) ){
         $i = 0;
         while($row = $result->fetch_assoc()){
             ++$i;
-            $html .= "<tr><td>" . $i . "</td><td>" . $row['Trigger'] . "</td><td>" . $row['Timing'] . "</td><td>" . $row['Table'] . "</td><td>" . $row['Event'] . "</td></tr>";
+            $html .= '<tr><td>' . $i . '</td><td><a href="?act=show_trigger_statement&trigger_name=' . $row['Trigger'] . '">' . $row['Trigger'] . '</a></td><td>' . $row['Timing'] . '</td><td>'. $row['Table'] . '</td><td>' . $row['Event'] . '</td></tr>';
         }
         $html .= "</table>";
     }
