@@ -8,12 +8,28 @@ define('MAX_PER_PAGE','100');
 
 date_default_timezone_set('Asia/Taipei');
 header("Content-type: text/html; charset=UTF-8");
+set_error_handler('exceptions_error_handler');
 
+
+function exceptions_error_handler($severity, $message, $filename, $lineno) {
+    if (error_reporting() == 0) {
+      return;
+    }
+    if (error_reporting() & $severity) {
+      throw new ErrorException($message, 0, $severity, $filename, $lineno);
+    }
+  }
 function change_query($queryKey, $queryValue){
     $queryStr = $_SERVER['QUERY_STRING'];
     parse_str($queryStr, $output);
     $output[$queryKey] = $queryValue;
     return http_build_query($output);
+}
+function formatBytes($bytes, $decimals = 2) {
+    if(is_null($bytes))return '0 B';
+    $sz = ' KMGTP';
+    $factor = floor((strlen($bytes) - 1) / 3);
+    return sprintf("%.{$decimals}f", $bytes / pow(1024, $factor)) + 0 . ' ' . @$sz[$factor] . 'B';
 }
 
 //Check if PHP session has already started (PHP >= 5.4.0 , PHP 7)
@@ -61,17 +77,17 @@ if (isset($_SESSION['server']) && isset($_SESSION['username']) ){
 if($act == 'show_trigger_statement'){
 
     $triggerName = isset($_REQUEST['trigger_name'])? $_REQUEST['trigger_name'] : null;
-    
+
     $statement = $mysqli->prepare('select *
-    from information_schema.triggers where 
+    from information_schema.triggers where
     information_schema.triggers.trigger_schema = ?  AND TRIGGER_NAME = ?');
     $statement->bind_param("ss", $db , $triggerName);
 
     $statement->execute();
     $result = $statement->get_result();
-    
+
     $row = $result->fetch_assoc();
-    
+
     $html = '';
     $html .= '<form>';
     $html .= '名稱：<input size="50" value="' . htmlspecialchars($row['TRIGGER_NAME'], ENT_QUOTES) . '">';
@@ -101,17 +117,17 @@ if($act == 'dump_all'){
 
     $lock_tb = array();
 
-    $tb_query = $mysqli->query("SHOW TABLE STATUS FROM `" . $db . "`");
+    $result = $mysqli->query("SHOW TABLE STATUS FROM `" . $db . "`");
 
     $output = "-- " . PROG_NAME . " 版本:  " . VERSION . $br_code;
     $output .= "-- --------------------------------------------------------" . $br_code ."-- 主機:                " . $_SESSION['server'] . $br_code ."-- 服務器版本:          " . mysqli_get_server_info($mysqli) . " port:" . mysqli_get_proto_info($mysqli)  . $br_code ."-- 服務器操作系統:      " . $_SERVER['SERVER_SOFTWARE'] . $br_code ."
 -- --------------------------------------------------------{$br_code}
 -- 資料庫備份 " . date('Y/m/d_H:i:s' , time()) . $br_code .  "-- 系統備份資料如下" . $br_code . $br_code;
-    if (0 < $tb_query->num_rows) {
-        while($tb_row = $tb_query->fetch_assoc()) {
+    if (0 < $result->num_rows) {
+        while($row = $result->fetch_assoc()) {
             if(!is_array($export_use_table)) break;
 
-            $tb_name = $tb_row['Name'];
+            $tb_name = $row['Name'];
             if (in_array($tb_name, $lock_tb)) continue;
             if (!in_array($tb_name, $export_use_table)) continue;
             $output .= "-- 列出資料表 `" . $tb_name . "` 資料" . $br_code;
@@ -205,7 +221,7 @@ if (isset($_SESSION['conn_state']) && isset($show_field)){
     echo '<table class="tableview"><tr bgcolor="#CA95FF">
     <td>Key</td><td width="40%">Field</td><td width="100">類型(Type)</td><td width="100">注釋</td><td>Default</td><td width="130">校對(Collation)</td><td width="50">Null</td><td>Extra</td>
     </tr>';
-    $result = $mysqli->query('SHOW FULL COLUMNS FROM ' . $show_field . ''); //
+    $result = $mysqli->query('SHOW FULL COLUMNS FROM `' . $show_field . '`'); //
     if($result){
         while($row = $result->fetch_assoc()) {
             //print_r($row); //列出所有欄位
@@ -239,12 +255,18 @@ if (isset($_SESSION['conn_state']) && isset($show_data)){
     if($page < 1) $page = 1;
     $html .= "<p>瀏覽資料表：$show_data </p>";
 
-    $result = $mysqli->query('SELECT `COLUMN_NAME` FROM `INFORMATION_SCHEMA`.`COLUMNS` WHERE `TABLE_SCHEMA`="' . $db . '" AND `TABLE_NAME`="' . $show_data . '"'); //列出所有欄位
+    $sql = 'SELECT `COLUMN_NAME` FROM `INFORMATION_SCHEMA`.`COLUMNS` WHERE `TABLE_SCHEMA`=? AND `TABLE_NAME`=?'; //列出所有欄位
+    $statement = $mysqli->prepare($sql);
+    $statement->bind_param("ss", $db, $show_data);
+
+    $statement->execute();
+    $result = $statement->get_result();
+
     if($result){
 
-        $statement = '`' . $db . '`.`' . $show_data . '`';
+        $clause = '`' . $db . '`.`' . $show_data . '`';
 
-        $query = $mysqli->prepare("SELECT * FROM " . $statement);
+        $query = $mysqli->prepare("SELECT * FROM " . $clause);
         $query->execute();
         $query->store_result();
         $rows = $query->num_rows;
@@ -261,8 +283,14 @@ if (isset($_SESSION['conn_state']) && isset($show_data)){
         }
         $html .= '</tr>';
 
-        $querySql = 'SELECT  * FROM ' . $statement . ' LIMIT ' . $offset . ', ' . MAX_PER_PAGE;
-        $result = $mysqli->query($querySql); //
+        $sql = 'SELECT  * FROM ' . $clause . ' LIMIT ?, ' . MAX_PER_PAGE;
+
+        $statement = $mysqli->prepare($sql);
+        $statement->bind_param("s", $offset);
+
+        $statement->execute();
+        $result = $statement->get_result();
+
         if($result && count($rowArr) >0 ){
             $rowIndex = $offset;
             while($row = $result->fetch_assoc()) {
@@ -280,7 +308,7 @@ if (isset($_SESSION['conn_state']) && isset($show_data)){
 
         $prePage = $page - 1;
         $nextPage = $page + 1;
-        
+
         $html .= '當前：第' . $page .'頁 | 總筆數：' . $rows . ' | 每頁：' . MAX_PER_PAGE . '筆 | ';
         $html .= '[<a href="?' . change_query("page", 1) .'">第一頁</a>]' ;
         if($prePage > 0){$html .= '[<a href="?' . change_query("page", $prePage) .'">上一頁</a>]' ;}
@@ -291,9 +319,10 @@ if (isset($_SESSION['conn_state']) && isset($show_data)){
     }
 
 
-    echo "<p>SQL查詢語法：<br><code>";
+    echo "<p>本頁面 SQL 查詢語法：<br><code>";
     // 顯示SQL查詢語法
-    $query_str = '<span class="red">' . $querySql . '</span>';
+    $sql = str_replace('?', $offset, $sql);
+    $query_str = '<span class="red">' . $sql . '</span>';
     print_r($query_str);
     echo "</code>";
 
@@ -309,28 +338,35 @@ if (isset($_SESSION['conn_state']) && !empty($db) ){
         <label><input type="checkbox" name="save_mode" value="12" checked>下載儲存</label>
         <input type="submit" value="匯出勾選資料" class="">
     ';
-    $html .= '<table class="tableview"><tr bgcolor="#C3C3C3">
-    <td width="35"><input type="checkbox" id="checkAll"/></td>
-    <td width="20%">資料表</td><td>註解</td><td width="100">引擎</td><td width="100">校對</td><td>數據條</td><td>大小</td><td>AUTO INCREMENT</td><td>INDEX LENGTH</td><td width="80">修改時間</td><td width="70">欄位</td><td width="70">資料</td>
+    $html .= '<table id="table" class="tableview"><tr bgcolor="#C3C3C3">
+    <th width="35"><input type="checkbox" id="checkAll"/></th>
+    <th class="sort" width="20%">資料表</th><th class="sort">註解</th><th class="sort" width="100">引擎</th><th width="100">校對</th><th class="sort" data-type="int">數據條</th><th class="sort" width="70">大小</th><th class="sort" data-type="int">AUTO INCREMENT</th><th class="sort">INDEX LENGTH</th><th class="sort" width="80">修改時間</th><th width="70">欄位</th><th width="70">資料</th>
     </tr>';
     //$result = $mysqli->query("SHOW TABLE STATUS");
-    $querySql = 'SELECT * FROM information_schema.TABLES
-     WHERE TABLES.TABLE_SCHEMA = "' . $db . '"
-          AND TABLES.TABLE_TYPE = "BASE TABLE"';
-    $result = $mysqli->query($querySql);
+    $sql = 'SELECT * FROM information_schema.TABLES
+     WHERE TABLES.TABLE_SCHEMA =? AND table_type = "BASE TABLE"';
+    $statement = $mysqli->prepare($sql);
+    $statement->bind_param("s", $db);
+    $statement->execute();
+    $result = $statement->get_result();
+
     if($result){
         while($row = $result->fetch_assoc()){
-            $html .= "<tr>
-            <td><input type=\"checkbox\" name=\"export_use_table[]\" class=\"down_csv\" value=\"" . $row['TABLE_NAME'] . "\" /></td>
-            <td><b>" . $row['TABLE_NAME'] . "</b></td><td>" . $row['TABLE_COMMENT'] . "</td><td>" . $row['ENGINE'] . "</td><td>" . $row['TABLE_COLLATION'] . "</td><td>" . $row['TABLE_ROWS'] . "</td><td>" . $row['DATA_LENGTH'] . "</td><td>" . $row['AUTO_INCREMENT'] . "</td><td>" . $row['INDEX_LENGTH'] . "</td><td>" . $row['UPDATE_TIME'] . "</td><td><a href='?show_field=" . $row['TABLE_NAME'] . "'>檢視</a></td><td><a href='?show_data=" . $row['TABLE_NAME'] . "'>檢視</a></td></tr>";
+            $html .= '<tr class="item">
+            <td><input type="checkbox" name="export_use_table[]" class="down_csv" value="' . $row['TABLE_NAME'] . '" /></td>
+            <td><b>' . $row['TABLE_NAME'] . '</b></td><td>' . $row['TABLE_COMMENT'] . '</td><td>' . $row['ENGINE'] . '</td><td>' . $row['TABLE_COLLATION'] . '</td><td>' . $row['TABLE_ROWS'] . '</td><td>' . formatBytes($row['DATA_LENGTH']) . '</td><td>' . $row['AUTO_INCREMENT'] . '</td><td>' . formatBytes($row['INDEX_LENGTH']) . '</td><td>' . $row['UPDATE_TIME'] . '</td><td><a href="?show_field=' . $row['TABLE_NAME'] . '">檢視</a></td><td><a href="?show_data=' . $row['TABLE_NAME'] . '">檢視</a></td></tr>';
         }
     }
 
     $html .= "</table></form>";
     $html .= "<hr>";
 
-    $querySql = ' SELECT * FROM information_schema.TABLES WHERE TABLES.TABLE_SCHEMA = "' . $db . '" AND TABLES.TABLE_TYPE = "VIEW"';
-    $result = $mysqli->query($querySql);
+    $sql = ' SELECT * FROM information_schema.TABLES WHERE TABLES.TABLE_SCHEMA = ? AND TABLES.TABLE_TYPE = "VIEW"';
+    $statement = $mysqli->prepare($sql);
+    $statement->bind_param("s", $db);
+    $statement->execute();
+    $result = $statement->get_result();
+
     if($result && $result->num_rows > 0){
         $html .= '<p> ' . $db .' 底下所有 View </p>';
         $html .= '<table class="tableview"><tr bgcolor="#C3C3C3">
@@ -361,10 +397,8 @@ if (isset($_SESSION['conn_state']) && !empty($db) ){
 
 }
 
-
 if (isset($_SESSION['conn_state'])){
     echo "<p> 所有資料庫 </p>";
-
     echo '<table width="800"><tr bgcolor="#C3C3C3">
       <td width="60%">資料庫</td><td>檢視</td>
       </tr><pre>';
@@ -378,7 +412,6 @@ if (isset($_SESSION['conn_state'])){
     }
     echo "</table>";
     echo "<hr>";
-
 }
 
 if (isset($_SESSION['conn_state'])){
@@ -401,10 +434,68 @@ header("Expires: 0");
 <script src="https://code.jquery.com/jquery-1.11.3.min.js"></script>
 <script>!window.jQuery && document.write('<script src="jquery-1.11.3.min.js"><\/script>')</script><!-- 使用本地端 -->
 <script>
+"use strict";
+jQuery.fn.sortElements = (function(){
+    var sort = [].sort;
+    return function(comparator, getSortable) {
+        getSortable = getSortable || function(){return this;};
+        var placements = this.map(function(){
+            var sortElement = getSortable.call(this),
+                parentNode = sortElement.parentNode,
+                nextSibling = parentNode.insertBefore(
+                    document.createTextNode(''),
+                    sortElement.nextSibling
+                );
+            return function() {
+                if (parentNode === this) {
+                    throw new Error(
+                        "You can't sort elements if any one is a descendant of another."
+                    );
+                }
+                parentNode.insertBefore(this, nextSibling);
+                parentNode.removeChild(nextSibling);
+            };
+        });
+        return sort.call(this, comparator).each(function(i){
+            placements[i].call(getSortable.call(this));
+        });
+    };
+})();
 $(window).load(function(){
     $("#checkAll").change(function () {
         $(".down_csv").prop('checked', $(this).prop("checked"));
     });
+
+    var table = $('#table');
+    /**
+     * 排序: 增加功能1.除了文字排序外增加數字型態 2.避免欄位是空的造成null判斷錯誤
+     */
+    $('.sort').wrapInner('<span title="排序" style="cursor:pointer" />').each(function(){
+        var th = $(this),
+            thIndex = th.index(),
+            inverse = true;
+        th.click(function(){
+            var intType = false;
+            if (typeof $(this).attr("data-type") !== "undefined" && $(this).attr("data-type") == 'int') {
+                intType = true;
+            }
+            table.find('td').filter(function(){
+                return $(this).index() === thIndex;
+            }).sortElements(function(a, b){
+                if(intType){
+                    var aVal = (a.firstChild === null) ? 0 : a.firstChild.nodeValue;
+                    var bVal = (b.firstChild === null) ? 0 : b.firstChild.nodeValue;
+                    return parseInt(aVal) > parseInt(bVal) ? inverse ? -1 : 1 : inverse ? 1 : -1;
+                }
+                // 按照原本文字型態排序
+                return $.text([a]) > $.text([b]) ? inverse ? -1 : 1 : inverse ? 1 : -1;
+            }, function(){
+                return this.parentNode;
+            });
+            inverse = !inverse;
+        });
+    });
+
 });
 </script>
 </html>
